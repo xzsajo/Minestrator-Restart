@@ -53,6 +53,84 @@ def send_tg(result, detail=''):
 
 
 # ============================================================
+# Invisible Turnstile：注入监听器，轮询等待 token
+# ============================================================
+
+INJECT_TOKEN_LISTENER_JS = """
+(function() {
+    if (window.__cf_token_listener_injected__) return;
+    window.__cf_token_listener_injected__ = true;
+    window.__cf_turnstile_token__ = '';
+
+    window.addEventListener('message', function(e) {
+        if (!e.origin || e.origin.indexOf('cloudflare.com') === -1) return;
+        var d = e.data;
+        if (!d || d.event !== 'complete' || !d.token) return;
+
+        console.log('[TokenCapture] complete, token length:', d.token.length);
+        window.__cf_turnstile_token__ = d.token;
+
+        var inputs = document.querySelectorAll(
+            'input[name="cf-turnstile-response"], input[name="cf_turnstile_response"]'
+        );
+        for (var i = 0; i < inputs.length; i++) {
+            try {
+                var nativeSet = Object.getOwnPropertyDescriptor(
+                    HTMLInputElement.prototype, 'value'
+                ).set;
+                nativeSet.call(inputs[i], d.token);
+                inputs[i].dispatchEvent(new Event('input',  {bubbles: true}));
+                inputs[i].dispatchEvent(new Event('change', {bubbles: true}));
+            } catch(err) {
+                inputs[i].value = d.token;
+            }
+        }
+    });
+    console.log('[TokenCapture] listener injected');
+})();
+"""
+
+READ_TOKEN_JS = "(function(){ return window.__cf_turnstile_token__ || ''; })()"
+
+
+def inject_listener(sb):
+    try:
+        sb.execute_script(INJECT_TOKEN_LISTENER_JS)
+        print("📡 Turnstile 监听器已注入")
+    except Exception as e:
+        print(f"⚠️ 监听器注入失败：{e}")
+
+
+def wait_for_token(sb, timeout=60) -> str:
+    print(f"⏳ 等待 Turnstile Token 自动生成（最多 {timeout} 秒）...")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            token = sb.execute_script(READ_TOKEN_JS)
+            if token and len(token) > 50:
+                print(f"✅ Token 已捕获（长度 {len(token)}）")
+                return token
+        except Exception:
+            pass
+        try:
+            token = sb.execute_script("""
+                (function(){
+                    var inp = document.querySelector('input[name="cf-turnstile-response"]');
+                    return (inp && inp.value && inp.value.length > 50) ? inp.value : '';
+                })()
+            """)
+            if token:
+                print(f"✅ Token 从 input 读取（长度 {len(token)}）")
+                return token
+        except Exception:
+            pass
+        time.sleep(1)
+
+    print("❌ 等待 Token 超时")
+    return ''
+
+
+# ============================================================
 # API：通过浏览器 fetch 发送重启指令（携带登录 Cookie）
 # ============================================================
 
@@ -172,14 +250,30 @@ def run_script():
         # ── 等待 Token ────────────────────────────────────────
         token = wait_for_token(sb, timeout=60)
         if not token:
-            sb.save_screenshot("token_timeout.png")
-            send_tg("❌ Token 获取超时", "Turnstile 未能自动完成")
-            return
+            print("⚠️ 未能自動獲取 Token，可能出現了驗證碼複選框。正在嘗試模擬點擊...")
+            sb.save_screenshot("token_timeout_before_click.png")
+            try:
+                # 滾動到頁面底部（確保驗證碼加載到可視區域中）
+                sb.scroll_to_bottom()
+                time.sleep(2)
+                # 呼叫 SeleniumBase 內置方法自動識別並點擊 Cloudflare Turnstile
+                sb.uc_gui_click_captcha()
+                print("🖱️ 已發送模擬點擊，等待 8 秒讓 Token 生成...")
+                time.sleep(8)
+                token = wait_for_token(sb, timeout=15)
+            except Exception as e:
+                print(f"⚠️ 模擬點擊發生異常: {e}")
 
         # ── 发送重启指令 ──────────────────────────────────────
+        # 如果最終仍未取得 Token，我們依然強行調用 API（滿足直接執行的需求）
+        if not token:
+            print("⚠️ 最終仍未取得 Token，嘗試使用【空 Token】直接發送重啟指令...")
+            sb.save_screenshot("token_timeout_final.png")
+            token = ""  # 將 Token 設為空字符串直接傳遞
+
         if not send_restart(sb, token):
             sb.save_screenshot("api_fail.png")
-            send_tg("❌ API 重启请求失败", f"Token长度={len(token)}")
+            send_tg("❌ API 重启请求失败", f"Token 长度={len(token)}")
             return
 
         # ── 刷新页面，等待剩余时间更新 ──────────────────────
