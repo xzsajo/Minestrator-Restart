@@ -12,7 +12,7 @@ PASSWORD   = _account[1].strip()
 SERVER_ID  = os.environ.get("MINESTRATOR_SERVER_ID", "").strip()
 AUTH_TOKEN = os.environ.get("MINESTRATOR_AUTH", "").strip()
 
-_proxy = os.environ.get("GOST_PROXY", "").strip()
+_proxy = os.environ.get("V2RAY_CONFIG", "").strip()
 LOCAL_PROXY = "http://127.0.0.1:10808" if _proxy else None
 
 _tg = os.environ.get("TG_BOT", "").strip()
