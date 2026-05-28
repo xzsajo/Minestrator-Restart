@@ -46,7 +46,7 @@ jobs:
           MINESTRATOR_ACCOUNT: ${{ secrets.MINESTRATOR_ACCOUNT }}
           MINESTRATOR_SERVER_ID: ${{ secrets.MINESTRATOR_SERVER_ID }}
           MINESTRATOR_AUTH: ${{ secrets.MINESTRATOR_AUTH }}
-          GOST_PROXY: ${{ secrets.GOST_PROXY }}
+          V2RAY_CONFIG: ${{ secrets.V2RAY_CONFIG }}
           TG_BOT: ${{ secrets.TG_BOT }}
         run: |
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python restart_minestrator.py
